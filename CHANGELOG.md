@@ -1,9 +1,15 @@
 # Changelog
 
+## 2.0.0 — 2026-10-31
+
+- **Breaking:** the whole CLI is now in US English — commands (`availability`, `request`, `trap-test`), options (`--country`, `--node`, `--probes`, `--residential`, `--path`, `--canary-text`, `--expect-bait`, `--expect-block`, `--control`, `--on-finish`), output and hook variables (`PC_PATH`, `PC_START_MS`, `PC_PROBE_*`).
+- `request --country` accepts several comma-separated countries.
+- Example hook moved to `examples/generic-unblock.sh`.
+
 ## 1.0.0 — 2026-10-31
 
-- Atalho `passport CC[,CC...] URL`: requisição a partir de um ou vários países.
-- `disponibilidade [CC]`: painel de países/servidores ativos (Globalping + check-host.net), com separação datacenter × residencial.
-- `requisicao`: GET/HEAD a partir de país (`--pais`) ou nó (`--no`), várias sondas.
-- `teste-armadilha`: validação de honeypot/WAF em 4 etapas (canary, isca, bloqueio da mesma sonda, controle), gancho `--ao-final`, código de saída para CI.
-- Sondas de datacenter por padrão (`--residencial` para liberar as residenciais).
+- Shortcut `passport CC[,CC...] URL`: request from one or more countries.
+- `availability [CC]`: dashboard of online countries/servers (Globalping + check-host.net), datacenter vs. residential.
+- `request`: GET/HEAD from a country or node, multiple probes.
+- `trap-test`: 4-step honeypot/WAF validation (canary, bait, block of the same probe, control), finish hook, CI-friendly exit code.
+- Datacenter probes by default.

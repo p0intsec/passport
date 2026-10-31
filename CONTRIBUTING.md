@@ -1,24 +1,24 @@
-# Contribuindo
+# Contributing
 
-Obrigado pelo interesse! O `passport` é um único script bash — a ideia é continuar assim: fácil de ler, sem dependências além de `bash 4+`, `curl` e `python3`.
+Thanks for your interest! `passport` is a single bash script and the goal is to keep it that way: easy to read, no dependencies beyond `bash 4+`, `curl` and `python3`.
 
-## Antes de abrir um PR
+## Before opening a PR
 
 ```bash
 bash -n passport
-shellcheck -S warning passport
+shellcheck -S warning passport examples/*.sh
 ./passport --help
-./passport disponibilidade KZ
+./passport availability KZ
 ./passport KZ https://example.com
 ```
 
-- Mensagens da CLI em português do Brasil; aliases em inglês são bem-vindos.
-- Não adicione nada que dispare requisições contra sistemas de terceiros nos testes automáticos (o CI só roda checagens locais).
-- Nunca coloque tokens, IPs internos ou hostnames reais nos exemplos — use `exemplo.com`.
-- Respeite as APIs públicas (Globalping, check-host.net): sem rajadas, sem uso como gerador de carga.
+- CLI output, options and docs are in US English.
+- Automated tests must not send requests to third-party systems (CI only runs local checks).
+- Never put tokens, internal IPs or real hostnames in examples — use `example.com`.
+- Be nice to the public APIs (Globalping, check-host.net): no bursts, no load generation.
 
-## Ideias de evolução
+## Ideas
 
-- Saída `--json` para integração com outras ferramentas.
-- Suporte a token do Globalping (cota maior) via variável de ambiente.
-- Modo `--watch` para acompanhar uma URL por alguns minutos.
+- `--json` output for integration with other tools.
+- Optional Globalping token (higher quota) via environment variable.
+- `--watch` mode to follow a URL for a few minutes.
