@@ -4,14 +4,6 @@
 
 Developed by **[p0intsec](https://github.com/p0intsec)**.
 
-<p align="center">
-  <a href="https://buymeacoffee.com/p0intsec" target="_blank">
-    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" width="260">
-  </a>
-  <br>
-  <sub>☕ Enjoying <b>passport</b>? Fuel the next tool — <a href="https://buymeacoffee.com/p0intsec">buy me a coffee</a>.</sub>
-</p>
-
 ```
 $ passport KZ https://example.com
   KZ Almaty             G-Core Labs                    AS202422  → HTTP 200  108 ms
