@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+# passport — troubleshooting de qualquer URL a partir de um PAÍS escolhido,
+# usando redes públicas de sondas (Globalping e check-host.net). Também
+# valida armadilhas de honeypot/WAF de ponta a ponta. Ver README.md.
+# Desenvolvido por p0intsec — https://github.com/p0intsec/passport
+#
+# Atalho:
+#   passport CC[,CC...] URL      ex.: passport KZ https://exemplo.com
+#                                     passport BR,DE,JP https://exemplo.com/status
+#
+# Comandos:
+#   passport disponibilidade [CC]
+#       Painel com os países e servidores ativos agora nas duas redes.
+#       Com CC (ex.: KZ), detalha cidades, provedores e ASN daquele país.
+#
+#   passport requisicao --url URL (--pais CC | --no NÓ) [opções]
+#       Uma requisição a partir do país/nó e mostra status, tempo e a sonda.
+#       --metodo GET|HEAD   (padrão GET)
+#       --sondas N          quantas sondas no país (Globalping, padrão 1)
+#
+#   passport teste-armadilha --host HOST (--pais CC | --no NÓ) [opções]
+#       Roteiro de 4 etapas para validar uma armadilha (honeypot/WAF):
+#         1. canary   — o host está atrás da proteção? (GET no caminho do canary)
+#         2. isca     — a sonda acessa o caminho-armadilha
+#         3. bloqueio — a MESMA sonda acessa "/" e deve ser barrada
+#         4. controle — sonda de outro país acessa "/" e deve passar
+#       --caminho P            caminho-armadilha (padrão /wp-login.php no Globalping, /.env no check-host)
+#       --canary-caminho P     padrão /robots.txt
+#       --canary-texto T       texto esperado no canary (sem ele, a etapa 1 é pulada)
+#       --esperado-isca N      status esperado na isca (padrão 200)
+#       --esperado-bloqueio N  status esperado no bloqueio (padrão 403)
+#       --controle CC          país do controle (padrão US)
+#       --ao-final CMD         comando executado no fim (ex.: seu desbloqueio),
+#                              com PC_HOST, PC_CAMINHO, PC_INICIO_MS, PC_IP (só
+#                              check-host), PC_SONDA_PAIS, PC_SONDA_ASN, PC_SONDA_REDE
+#
+# Opções gerais:
+#   --residencial   aceita sondas residenciais no Globalping (padrão: só datacenter)
+#   -h, --help
+#
+# Requisitos: bash 4+, curl, python3. Sem conta/token: usa as APIs públicas
+# (Globalping sem autenticação ≈ 250 medições/hora).
+
+set -euo pipefail
+
+VERSAO="1.0.0"
+FALHAS=0
+GP="https://api.globalping.io/v1"
+CH="https://check-host.net"
+UA="passport/$VERSAO (+https://github.com/p0intsec/passport)"
+
+uso() { sed -n '2,49p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+if [[ -t 1 ]]; then VERDE=$'\033[32m'; VERMELHO=$'\033[31m'; AMARELO=$'\033[33m'; NEGRITO=$'\033[1m'; FIM=$'\033[0m'
+else VERDE=""; VERMELHO=""; AMARELO=""; NEGRITO=""; FIM=""; fi
+ok()    { printf "  %s✔%s %s\n" "$VERDE" "$FIM" "$*"; }
+falha() { printf "  %s✘%s %s\n" "$VERMELHO" "$FIM" "$*"; FALHAS=$((FALHAS + 1)); }
+aviso() { printf "  %s!%s %s\n" "$AMARELO" "$FIM" "$*"; }
+erro()  { printf "%serro:%s %s\n" "$VERMELHO" "$FIM" "$*" >&2; exit 2; }
+
+for dep in curl python3; do command -v "$dep" >/dev/null || erro "requer $dep"; done
+
+json() { python3 -c "import json,sys; d=json.load(sys.stdin); $1"; }
+get()  { curl -s --max-time 30 -A "$UA" -H "Accept: application/json" "$@"; }
+
+# --- Globalping ---------------------------------------------------------------
+TAGS='"datacenter-network"'
+gp_loc() { # "KZ" ou "BR,DE,JP" → locations (JSON), uma entrada por país
+  local cc out="" sep=""
+  IFS=',' read -ra lista <<< "$1"
+  for cc in "${lista[@]}"; do
+    if [[ -n "$TAGS" ]]; then out+="$sep{\"country\":\"$cc\",\"tags\":[$TAGS]}"; else out+="$sep{\"country\":\"$cc\"}"; fi
+    sep=","
+  done
+  echo "[$out]"
+}
+
+# Cria a medição e espera o fim. Saída: uma linha por sonda
+#   status|ms|país|cidade|rede|ASN|id_da_medição      (ou "erro|motivo")
+# locations pode ser um país ou o id de uma medição anterior entre aspas —
+# este último reaproveita EXATAMENTE as mesmas sondas (mesmo IP).
+gp_http() { # $1=alvo(host) $2=caminho $3=locations $4=método $5=limite $6=protocolo
+  local resp id r
+  resp=$(curl -s --max-time 30 -A "$UA" -X POST "$GP/measurements" -H "Content-Type: application/json" -d "{
+    \"type\":\"http\",\"target\":\"$1\",\"locations\":$3,\"limit\":${5:-1},
+    \"measurementOptions\":{\"protocol\":\"${6:-HTTPS}\",\"request\":{\"method\":\"${4:-GET}\",\"path\":\"$2\"}}}")
+  id=$(echo "$resp" | json "print(d.get('id',''))")
+  if [[ -z "$id" ]]; then
+    # O motivo vem na MESMA resposta — nunca repetir o pedido só para ler o erro.
+    echo "erro|$(echo "$resp" | json "e=d.get('error',{}); print('; '.join(str(v) for v in (e.get('params') or {}).values()) or e.get('message','sem sonda disponível'))")"
+    return
+  fi
+  for _ in $(seq 1 25); do
+    sleep 2
+    r=$(get "$GP/measurements/$id")
+    if [[ $(echo "$r" | json "print(d.get('status'))") != in-progress ]]; then
+      echo "$r" | json "
+for x in d.get('results', []):
+    p, res = x['probe'], x['result']
+    print(f\"{res.get('statusCode') or 'erro'}|{res.get('timings',{}).get('total','?')}|{p['country']}|{p['city']}|{p['network']}|{p['asn']}|$id\")"
+      return
+    fi
+  done
+  echo "erro|tempo esgotado aguardando a medição $id"
+}
+
+# --- check-host.net -----------------------------------------------------------
+ch_ip() { get "$CH/nodes/hosts" | json "print(d['nodes'].get('$1.node.check-host.net',{}).get('ip',''))"; }
+ch_http() { # $1=nó $2=url → status|ms
+  local id r
+  id=$(get "$CH/check-http?host=$2&node=$1.node.check-host.net" | json "print(d.get('request_id',''))")
+  [[ -z "$id" ]] && { echo "erro|check-host recusou o pedido"; return; }
+  for _ in $(seq 1 15); do
+    sleep 2
+    r=$(get "$CH/check-result/$id")
+    if ! echo "$r" | grep -q null; then
+      echo "$r" | json "
+v=list(d.values())[0][0]
+print(f\"{v[3] if len(v)>3 and v[3] else 'erro'}|{round(v[1]*1000) if v[1] else '?'}\")"
+      return
+    fi
+  done
+  echo "erro|tempo esgotado"
+}
+
+# =============================================================================
+cmd_disponibilidade() {
+  local alvo="${1:-}" tmp
+  tmp=$(mktemp -d); trap 'rm -rf "$tmp"' RETURN
+  get "$CH/nodes/hosts" > "$tmp/ch.json"
+  get "$GP/probes" > "$tmp/gp.json"
+  python3 - "$tmp/ch.json" "$tmp/gp.json" "${alvo^^}" "$NEGRITO" "$FIM" <<'PY'
+import json, sys, collections
+ch = json.load(open(sys.argv[1]))["nodes"]
+gp = json.load(open(sys.argv[2]))
+alvo, B, F = sys.argv[3], sys.argv[4], sys.argv[5]
+nomes, nos = {}, collections.defaultdict(list)
+for host, v in ch.items():
+    cc = v["location"][0].upper(); nomes[cc] = v["location"][1]
+    nos[cc].append((host.split(".")[0], v["location"][2], v.get("ip", ""), v.get("asn", "")))
+dc, res, sondas = collections.Counter(), collections.Counter(), collections.defaultdict(list)
+for p in gp:
+    loc = p["location"]; cc = loc["country"]
+    tipo = "datacenter" if "datacenter-network" in (p.get("tags") or []) else "residencial"
+    (dc if tipo == "datacenter" else res)[cc] += 1
+    sondas[cc].append((loc.get("city") or "?", loc.get("network") or "?", loc.get("asn"), tipo))
+
+if alvo:
+    print(f"\n  {B}{alvo}{F} {nomes.get(alvo, '')}")
+    print(f"  {B}check-host.net{F} (use --no <nó>)")
+    for no, cidade, ip, asn in sorted(nos.get(alvo, [])):
+        print(f"    {no:6} {cidade:20} {ip:16} {asn}")
+    if not nos.get(alvo): print("    — nenhum nó")
+    print(f"  {B}Globalping{F} (use --pais {alvo})")
+    c = collections.Counter(sondas.get(alvo, []))
+    for (cidade, rede, asn, tipo), n in sorted(c.items(), key=lambda x: (x[0][3] != "datacenter", -x[1])):
+        print(f"    {n:3}x {tipo:11} {cidade:20} {rede[:36]:36} AS{asn}")
+    if not c: print("    — nenhuma sonda")
+    sys.exit(0)
+
+paises = sorted(set(dc) | set(res) | set(nos))
+print(f"\n  {B}Disponibilidade agora{F} — check-host: {len(ch)} nós · Globalping: {len(gp)} sondas em {len(set(dc)|set(res))} países\n")
+print(f"  {'País':4}  {'check-host':24} {'Globalping DC':>13} {'resid.':>7}")
+print(f"  {'-'*4}  {'-'*24} {'-'*13} {'-'*7}")
+for cc in paises:
+    lista = ",".join(sorted(n for n, *_ in nos.get(cc, [])))
+    d, r = dc.get(cc, 0), res.get(cc, 0)
+    obs = "  (só residencial)" if not (lista or d) else ""
+    print(f"  {cc:4}  {lista[:24]:24} {d:13} {r:7}{obs}")
+print("\n  Por padrão só sondas de datacenter. Detalhe de um país: passport disponibilidade KZ")
+PY
+}
+
+# =============================================================================
+cmd_requisicao() {
+  local url="" pais="" no="" metodo="GET" sondas=1
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --url) url="$2"; shift 2 ;;
+      --pais) pais="${2^^}"; shift 2 ;;
+      --no) no="${2%%.*}"; shift 2 ;;
+      --metodo) metodo="${2^^}"; shift 2 ;;
+      --sondas) sondas="$2"; shift 2 ;;
+      --residencial) TAGS=""; shift ;;
+      *) erro "opção desconhecida: $1" ;;
+    esac
+  done
+  [[ -z "$url" ]] && erro "falta --url"
+  [[ -z "$pais" && -z "$no" ]] && erro "informe --pais ou --no"
+  [[ "$url" != http*://* ]] && url="https://$url"
+
+  if [[ -n "$no" ]]; then
+    local ip; ip=$(ch_ip "$no"); [[ -z "$ip" ]] && erro "nó $no não existe (veja: passport disponibilidade)"
+    IFS='|' read -r st ms < <(ch_http "$no" "$url")
+    printf "  %-6s %-16s → HTTP %s  %s ms\n" "$no" "$ip" "$st" "$ms"
+    if [[ "$st" == erro ]]; then exit 1; fi
+    return 0
+  fi
+
+  local proto host caminho
+  proto=$(python3 -c "import sys,urllib.parse;print(urllib.parse.urlsplit(sys.argv[1]).scheme.upper())" "$url")
+  host=$(python3 -c "import sys,urllib.parse;print(urllib.parse.urlsplit(sys.argv[1]).hostname)" "$url")
+  caminho=$(python3 -c "import sys,urllib.parse;u=urllib.parse.urlsplit(sys.argv[1]);print((u.path or '/')+('?'+u.query if u.query else ''))" "$url")
+  local rc=0 n_paises
+  n_paises=$(awk -F, '{print NF}' <<< "$pais")
+  (( sondas < n_paises )) && sondas=$n_paises
+  while IFS='|' read -r st ms p cidade rede asn _; do
+    if [[ "$st" == erro ]]; then echo "  Globalping recusou: $ms"; rc=1; continue; fi
+    printf "  %-2s %-18s %-30s AS%-7s → HTTP %s  %s ms\n" "$p" "$cidade" "${rede:0:30}" "$asn" "$st" "$ms"
+  done < <(gp_http "$host" "$caminho" "$(gp_loc "$pais")" "$metodo" "$sondas" "$proto")
+  return $rc
+}
+
+# =============================================================================
+cmd_teste_armadilha() {
+  local host="" pais="" no="" caminho="" canary="/robots.txt" texto="" esp_isca=200 esp_bloq=403 controle="US" ao_final=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --host) host="$2"; shift 2 ;;
+      --pais) pais="${2^^}"; shift 2 ;;
+      --no) no="${2%%.*}"; shift 2 ;;
+      --caminho) caminho="$2"; shift 2 ;;
+      --canary-caminho) canary="$2"; shift 2 ;;
+      --canary-texto) texto="$2"; shift 2 ;;
+      --esperado-isca) esp_isca="$2"; shift 2 ;;
+      --esperado-bloqueio) esp_bloq="$2"; shift 2 ;;
+      --controle) controle="${2^^}"; shift 2 ;;
+      --ao-final) ao_final="$2"; shift 2 ;;
+      --residencial) TAGS=""; shift ;;
+      *) erro "opção desconhecida: $1" ;;
+    esac
+  done
+  [[ -z "$host" ]] && erro "falta --host"
+  [[ -z "$pais" && -z "$no" ]] && erro "informe --pais ou --no"
+  [[ -z "$caminho" ]] && { [[ -n "$pais" ]] && caminho="/wp-login.php" || caminho="/.env"; }
+
+  FALHAS=0
+  local inicio; inicio=$(python3 -c "import time;print(int(time.time()*1000))")
+  local sp="" sasn="" srede="" ip=""
+  echo "${NEGRITO}passport — teste de armadilha${FIM}"
+  echo "  host: $host   isca: $caminho   origem: ${pais:+país $pais}${no:+nó $no}   controle: $controle"
+  echo
+
+  echo "1) Canary ($canary)"
+  if [[ -z "$texto" ]]; then
+    aviso "pulado (sem --canary-texto)"
+  elif curl -s --max-time 15 -A "$UA" "https://$host$canary" | grep -qF "$texto"; then
+    ok "texto do canary presente — host atrás da proteção"
+  else
+    falha "texto do canary ausente — o host NÃO está atrás da proteção; nada mais foi testado"; return 1
+  fi
+
+  local st ms cidade mid st2
+  if [[ -n "$pais" ]]; then
+    echo "2) Isca a partir de $pais"
+    IFS='|' read -r st ms sp cidade srede sasn mid < <(gp_http "$host" "$caminho" "$(gp_loc "$pais")" GET 1 HTTPS)
+    if [[ "$st" == erro ]]; then falha "Globalping recusou: $ms"; return 1; fi
+    echo "     sonda: $cidade/$sp — $srede (AS$sasn)"
+    [[ "$st" == "$esp_isca" ]] && ok "HTTP $st em ${ms} ms" || falha "esperado $esp_isca, veio $st"
+    echo "3) A mesma sonda acessa /"
+    IFS='|' read -r st2 _ < <(gp_http "$host" "/" "\"$mid\"" GET 1 HTTPS)
+  else
+    ip=$(ch_ip "$no"); [[ -z "$ip" ]] && erro "nó $no não existe"
+    echo "2) Isca a partir do nó $no ($ip)"
+    IFS='|' read -r st ms < <(ch_http "$no" "https://$host$caminho")
+    [[ "$st" == "$esp_isca" ]] && ok "HTTP $st em ${ms} ms" || falha "esperado $esp_isca, veio $st"
+    echo "3) O mesmo nó acessa /"
+    IFS='|' read -r st2 _ < <(ch_http "$no" "https://$host/")
+  fi
+  [[ "$st2" == "$esp_bloq" ]] && ok "barrado (HTTP $st2)" || falha "esperado $esp_bloq, veio $st2"
+
+  echo "4) Controle: $controle acessa /"
+  local st3 ms3 p3 c3
+  IFS='|' read -r st3 ms3 p3 c3 _ < <(gp_http "$host" "/" "$(gp_loc "$controle")" GET 1 HTTPS)
+  [[ "$st3" =~ ^[23] ]] && ok "HTTP $st3 em ${ms3} ms ($c3/$p3)" || falha "controle deveria passar, veio $st3"
+
+  echo
+  if [[ -n "$ao_final" ]]; then
+    echo "5) --ao-final"
+    PC_HOST="$host" PC_CAMINHO="$caminho" PC_INICIO_MS="$inicio" PC_IP="$ip" \
+      PC_SONDA_PAIS="${sp:-${no:+$no}}" PC_SONDA_ASN="$sasn" PC_SONDA_REDE="$srede" \
+      bash -c "$ao_final" && ok "comando final concluído" || falha "comando final falhou"
+  else
+    aviso "a origem de teste pode continuar BLOQUEADA no seu sistema — remova-a (ou use --ao-final)"
+  fi
+  [[ $FALHAS -eq 0 ]] && echo "${VERDE}${NEGRITO}Tudo certo.${FIM}" || { echo "${VERMELHO}${NEGRITO}$FALHAS etapa(s) falharam.${FIM}"; return 1; }
+}
+
+# =============================================================================
+[[ $# -eq 0 ]] && uso 2
+# Atalho: passport KZ https://exemplo.com  |  passport BR,DE https://exemplo.com
+if [[ "$1" =~ ^[A-Za-z]{2}(,[A-Za-z]{2})*$ && $# -ge 2 ]]; then
+  paises="${1^^}"; shift
+  cmd_requisicao --pais "$paises" --url "$@"; exit $?
+fi
+comando="$1"; shift
+case "$comando" in
+  disponibilidade|availability) cmd_disponibilidade "${1:-}" ;;
+  requisicao|request) cmd_requisicao "$@" ;;
+  teste-armadilha|trap-test) cmd_teste_armadilha "$@" ;;
+  -v|--version) echo "passport $VERSAO" ;;
+  -h|--help|help) uso 0 ;;
+  *) erro "comando desconhecido: $comando (veja --help)" ;;
+esac

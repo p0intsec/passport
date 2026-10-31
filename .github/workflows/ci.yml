@@ -1,0 +1,17 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  checagens:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sintaxe
+        run: bash -n passport && bash -n exemplos/*.sh
+      - name: ShellCheck
+        run: shellcheck -S warning passport exemplos/*.sh
+      - name: Ajuda e versão
+        run: ./passport --help && ./passport --version
