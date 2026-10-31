@@ -4,7 +4,13 @@
 
 Developed by **[p0intsec](https://github.com/p0intsec)**.
 
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/p0intsec)
+<p align="center">
+  <a href="https://buymeacoffee.com/p0intsec" target="_blank">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" width="260">
+  </a>
+  <br>
+  <sub>☕ Enjoying <b>passport</b>? Fuel the next tool — <a href="https://buymeacoffee.com/p0intsec">buy me a coffee</a>.</sub>
+</p>
 
 ```
 $ passport KZ https://example.com
@@ -257,6 +263,10 @@ Developed and maintained by **[p0intsec](https://github.com/p0intsec)**.
 
 If `passport` saved you some troubleshooting time, you can support the project here:
 
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/p0intsec)
+<p align="center">
+  <a href="https://buymeacoffee.com/p0intsec" target="_blank">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" width="260">
+  </a>
+</p>
 
 License: [MIT](LICENSE).
