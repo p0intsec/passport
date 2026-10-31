@@ -4,6 +4,8 @@
 
 Developed by **[p0intsec](https://github.com/p0intsec)**.
 
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/p0intsec)
+
 ```
 $ passport KZ https://example.com
   KZ Almaty             G-Core Labs                    AS202422  → HTTP 200  108 ms
@@ -50,6 +52,7 @@ All good.
 - [Limits and gotchas](#limits-and-gotchas)
 - [Responsible use](#responsible-use)
 - [Development](#development)
+- [Author](#author)
 
 ---
 
@@ -251,5 +254,9 @@ CI (`.github/workflows/ci.yml`) runs `bash -n`, ShellCheck and `--help` on every
 ## Author
 
 Developed and maintained by **[p0intsec](https://github.com/p0intsec)**.
+
+If `passport` saved you some troubleshooting time, you can support the project here:
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/p0intsec)
 
 License: [MIT](LICENSE).
